@@ -16,7 +16,9 @@ defmodule Game.Session.Process do
   alias Game.Command.Move
   alias Game.Command.Pager
   alias Game.Format
+  alias Game.Format.Players, as: FormatPlayers
   alias Game.Hint
+  alias Game.Player
   alias Game.Session
   alias Game.Session.Channels
   alias Game.Session.Character, as: SessionCharacter
@@ -101,7 +103,7 @@ defmodule Game.Session.Process do
     Session.Registry.unregister()
     Session.Registry.player_offline(state.user)
 
-    @environment.leave(save.room_id, {:player, user}, :signout)
+    @environment.leave(save.room_id, {:player, state.character}, :signout)
     @environment.unlink(save.room_id)
 
     user |> Account.save_session(save, session_started_at, Timex.now(), stats)
@@ -189,8 +191,13 @@ defmodule Game.Session.Process do
   end
 
   def handle_cast({:recv_gmcp, module, data}, state) do
-    GMCP.handle_gmcp(state, module, data)
-    {:noreply, state}
+    case GMCP.handle_gmcp(state, module, data) do
+      :ok ->
+        {:noreply, state}
+
+      {:update, state} ->
+        {:noreply, state}
+    end
   end
 
   def handle_cast({:teleport, room_id}, state) do
@@ -226,7 +233,7 @@ defmodule Game.Session.Process do
   end
 
   def handle_call(:info, _from, state) do
-    {:reply, {:player, state.user}, state}
+    {:reply, {:player, state.character}, state}
   end
 
   #
@@ -294,9 +301,9 @@ defmodule Game.Session.Process do
   end
 
   def handle_info(:save, state = %{state: "active"}) do
-    %{user: user, save: save, session_started_at: session_started_at} = state
-    user |> Account.save(save)
-    user |> Account.update_time_online(session_started_at, Timex.now())
+    %{save: save, session_started_at: session_started_at} = state
+    state.user |> Account.save(save)
+    state.user |> Account.update_time_online(session_started_at, Timex.now())
     self() |> schedule_save()
     {:noreply, state}
   end
@@ -359,13 +366,11 @@ defmodule Game.Session.Process do
     case stats.health_points do
       health_points when health_points < 1 ->
         stats = Map.put(stats, :health_points, 1)
-        save = Map.put(state.save, :stats, stats)
-        user = Map.put(state.user, :save, save)
+        save = %{state.save | stats: stats}
 
         state =
           state
-          |> Map.put(:save, save)
-          |> Map.put(:user, user)
+          |> Player.update_save(save)
           |> Regen.maybe_trigger_regen()
 
         {:update, state} = Move.move_to(state, graveyard_id, :death, :respawn)
@@ -383,7 +388,7 @@ defmodule Game.Session.Process do
   """
   def prompt(state = %{socket: socket, user: user, save: save}) do
     state |> GMCP.vitals()
-    socket |> @socket.prompt(Format.prompt(user, save))
+    socket |> @socket.prompt(FormatPlayers.prompt(user, save))
     state
   end
 

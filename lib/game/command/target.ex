@@ -14,7 +14,7 @@ defmodule Game.Command.Target do
 
   @must_be_alive true
 
-  commands([{"target", ["t"]}])
+  commands([{"target", ["t"]}], parse: false)
 
   @impl Game.Command
   def help(:topic), do: "Target"
@@ -40,13 +40,41 @@ defmodule Game.Command.Target do
     """
   end
 
+  @impl true
+  def parse(command, _context), do: parse(command)
+
+  @impl Game.Command
+  @doc """
+  Parse the command into arguments
+
+      iex> Game.Command.Target.parse("target clear")
+      {:clear}
+
+      iex> Game.Command.Target.parse("target bandit")
+      {:set, "bandit"}
+
+      iex> Game.Command.Target.parse("unknown")
+      {:error, :bad_parse, "unknown"}
+  """
+  @spec parse(String.t()) :: {any()}
+  def parse(command)
+  def parse("target clear"), do: {:clear}
+  def parse("target " <> name), do: {:set, name}
+  def parse("t " <> name), do: {:set, name}
+  def parse("target"), do: {}
+
   @impl Game.Command
   @doc """
   Target an enemy
   """
   def run(command, state)
 
-  def run({target}, state = %{socket: socket, save: %{room_id: room_id}}) do
+  def run({:clear}, state) do
+    state |> GMCP.clear_target()
+    {:update, Map.put(state, :target, nil)}
+  end
+
+  def run({:set, target}, state = %{socket: socket, save: %{room_id: room_id}}) do
     {:ok, room} = @environment.look(room_id)
     socket |> target_character(target, room, state)
   end
@@ -81,8 +109,8 @@ defmodule Game.Command.Target do
   @spec target_npc(NPC.t(), pid, map) :: {:update, map}
   def target_npc(npc, socket, state)
 
-  def target_npc(npc = %{id: id}, socket, state = %{user: user}) do
-    Character.being_targeted({:npc, id}, {:player, user})
+  def target_npc(npc = %{id: id}, socket, state) do
+    Character.being_targeted({:npc, id}, {:player, state.character})
     message = gettext("You are now targeting %{name}.", name: Format.npc_name(npc))
     socket |> @socket.echo(message)
     state |> GMCP.target({:npc, npc})
@@ -104,11 +132,11 @@ defmodule Game.Command.Target do
     socket |> @socket.echo(message)
   end
 
-  def target_player(player = %{id: id}, socket, state = %{user: user}) do
-    Character.being_targeted({:player, id}, {:player, user})
+  def target_player(player = %{id: id}, socket, state) do
+    Character.being_targeted({:player, id}, {:player, state.character})
     message = gettext("You are now targeting %{name}.", name: Format.player_name(player))
     socket |> @socket.echo(message)
-    state |> GMCP.target({:player, user})
+    state |> GMCP.target({:player, player})
 
     {:update, Map.put(state, :target, {:player, id})}
   end
@@ -157,13 +185,13 @@ defmodule Game.Command.Target do
       iex> Game.Command.Target.find_target(%{}, "Bandit", [%{name: "Bandit"}], [%{name: "Bandit"}])
       {:player, %{name: "Bandit"}}
 
-      iex> Game.Command.Target.find_target(%{user: %{name: "Player"}}, "self", [%{name: "Bandit"}], [%{name: "Bandit"}])
+      iex> Game.Command.Target.find_target(%{character: %{name: "Player"}}, "self", [%{name: "Bandit"}], [%{name: "Bandit"}])
       {:player, %{name: "Player"}}
   """
   def find_target(state, name, players, npcs) do
     case name do
       "self" ->
-        {:player, state.user}
+        {:player, state.character}
 
       _ ->
         _find_target(name, players, npcs)

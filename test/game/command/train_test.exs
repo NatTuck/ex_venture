@@ -2,6 +2,7 @@ defmodule Game.Command.TrainTest do
   use Data.ModelCase
   doctest Game.Command.Train
 
+  alias Data.ActionBar
   alias Game.Character
   alias Game.Command.Train
 
@@ -12,7 +13,7 @@ defmodule Game.Command.TrainTest do
     @socket.clear_messages()
     user = create_user(%{name: "user", password: "password"})
 
-    %{state: %{socket: :socket, user: user, save: %{user.save | level: 2, experience_points: 1100}}}
+    %{state: session_state(%{user: user, save: %{user.save | level: 2, experience_points: 1100}})}
   end
 
   describe "list out trainable skills" do
@@ -130,6 +131,7 @@ defmodule Game.Command.TrainTest do
 
       assert state.save.skill_ids == [slash.id]
       assert state.save.spent_experience_points == 1000
+      assert state.save.actions == [%ActionBar.SkillAction{id: slash.id}]
     end
 
     test "skill not found", %{state: state, guard: guard} do

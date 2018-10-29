@@ -33,6 +33,8 @@ defmodule TestHelpers do
   alias Data.User
   alias Data.Zone
 
+  def session_state(attributes), do: Test.Session.session_state(attributes)
+
   def base_user() do
     %User{
       id: 10,
@@ -75,6 +77,7 @@ defmodule TestHelpers do
       stats: base_stats(),
       wearing: %{},
       wielding: %{},
+      actions: [],
       config: %{
         hints: true,
         prompt: "%h/%Hhp",

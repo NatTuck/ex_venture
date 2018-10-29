@@ -7,6 +7,8 @@ defmodule Game.Command.Use do
 
   alias Game.Character
   alias Game.Effect
+  alias Game.Format.Effects, as: FormatEffects
+  alias Game.Format.Items, as: FormatItems
   alias Game.Item
   alias Game.Items
   alias Game.Utility
@@ -47,6 +49,7 @@ defmodule Game.Command.Use do
     item =
       save.items
       |> Items.items()
+      |> Enum.reject(&Utility.empty_string?(&1.usage_command))
       |> Enum.find(fn item ->
         Utility.matches?(command, item.usage_command)
       end)
@@ -91,11 +94,11 @@ defmodule Game.Command.Use do
   end
 
   defp use_item(%{socket: socket}, {_, item = %{is_usable: false}}) do
-    message = gettext("%{name} could not be used", name: Format.item_name(item))
+    message = gettext("%{name} could not be used", name: FormatItems.item_name(item))
     socket |> @socket.echo(message)
   end
 
-  defp use_item(state = %{socket: socket, user: user, save: save}, {instance, item}) do
+  defp use_item(state = %{socket: socket, save: save}, {instance, item}) do
     player_effects = save |> Item.effects_on_player()
 
     effects =
@@ -104,16 +107,12 @@ defmodule Game.Command.Use do
 
     effects = save.stats |> Effect.calculate(effects)
 
-    Character.apply_effects(
-      {:player, user},
-      effects,
-      {:player, user},
-      Format.usee_item(item, target: {:player, user}, user: {:player, user})
-    )
+    usee_text = FormatItems.usee_item(item, target: {:player, state.character}, user: {:player, state.character})
+    Character.apply_effects({:player, state.character}, effects, {:player, state.character}, usee_text)
 
-    description = Format.user_item(item, target: {:player, user}, user: {:player, user})
+    description = FormatItems.user_item(item, target: {:player, state.character}, user: {:player, state.character})
 
-    effects_message = Enum.join([description | Format.effects(effects, {:player, user})], "\n")
+    effects_message = Enum.join([description | FormatEffects.effects(effects, {:player, state.character})], "\n")
     socket |> @socket.echo(effects_message)
 
     spend_item(state, instance)

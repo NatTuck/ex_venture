@@ -13,6 +13,7 @@ defmodule Game.Session.Login do
 
   require Logger
 
+  alias Data.Character
   alias Data.Repo
   alias Data.Room
   alias Game.Authentication
@@ -20,6 +21,7 @@ defmodule Game.Session.Login do
   alias Game.Channel
   alias Game.Mail
   alias Game.MOTD
+  alias Game.Player
   alias Game.Session
   alias Game.Session.Process
   alias Game.Session.GMCP
@@ -53,15 +55,15 @@ defmodule Game.Session.Login do
 
     state =
       state
-      |> Map.put(:user, player)
-      |> Map.put(:save, player.save)
+      |> setup_state_after_login(player)
       |> Map.put(:state, "after_sign_in")
 
     socket |> @socket.set_user_id(player.id)
     state |> CommandConfig.push_config(player.save.config)
+    state |> GMCP.config_actions()
 
     message = """
-    Welcome, #{player.name}!
+    Welcome, #{state.character.name}!
 
     #{MOTD.random_asim()}
     """
@@ -76,7 +78,7 @@ defmodule Game.Session.Login do
         socket |> @socket.echo(dgettext("login", "You have mail."))
     end
 
-    socket |> @socket.echo(dgettext("login", "[Press enter to continue]"))
+    socket |> @socket.echo(dgettext("login", "{command send='Sign In'}[Press enter to continue]{/command}"))
 
     state
   end
@@ -91,27 +93,25 @@ defmodule Game.Session.Login do
 
         starting_save = Game.Config.starting_save()
 
-        %{user: player, save: save} = state
-
-        save = Map.put(save, :room_id, starting_save.room_id)
-        player = %{player | save: save}
-        state = %{state | user: player, save: save}
+        save = Map.put(state.save, :room_id, starting_save.room_id)
+        state = Player.update_save(state, save)
         finish_login(state, session)
     end
   end
 
-  defp finish_login(state = %{user: player}, session) do
+  defp finish_login(state = %{user: player, character: character}, session) do
     Session.Registry.register(player)
     Session.Registry.player_online(player)
 
-    @environment.link(player.save.room_id)
-    @environment.enter(player.save.room_id, {:player, player}, :login)
+    @environment.link(character.save.room_id)
+    @environment.enter(character.save.room_id, {:player, character}, :login)
     session |> Session.recv("look")
     state |> GMCP.character()
+    state |> GMCP.character_skills()
     state |> GMCP.discord_status()
 
-    Enum.each(player.save.channels, &Channel.join/1)
-    Channel.join_tell({:player, player})
+    Enum.each(character.save.channels, &Channel.join/1)
+    Channel.join_tell({:player, character})
 
     state
     |> Regen.maybe_trigger_regen()
@@ -210,11 +210,7 @@ defmodule Game.Session.Login do
   defp _recover_session(player, state) do
     Session.Registry.register(player)
 
-    state =
-      state
-      |> Map.put(:user, player)
-      |> Map.put(:save, player.save)
-
+    state = setup_state_after_login(state, player)
     state = after_sign_in(state, self())
 
     state.socket |> @socket.echo(dgettext("login", "Session recovering..."))
@@ -222,6 +218,15 @@ defmodule Game.Session.Login do
     state |> Regen.maybe_trigger_regen()
 
     state
+  end
+
+  defp setup_state_after_login(state, player) do
+    character = Character.from_user(player)
+
+    state
+    |> Map.put(:user, player)
+    |> Map.put(:character, character)
+    |> Map.put(:save, player.save)
   end
 
   defp check_already_signed_in(player) do

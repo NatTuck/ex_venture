@@ -8,6 +8,7 @@ defmodule Game.Session.GMCP do
   alias Data.Exit
   alias Data.Room
   alias Game.Config
+  alias Game.Skills
 
   @doc """
   Handle a GMCP request from the client
@@ -32,6 +33,18 @@ defmodule Game.Session.GMCP do
 
   def handle_gmcp(state, "External.Discord.Get", _data) do
     discord_status(state)
+  end
+
+  def handle_gmcp(state, "Character.Skills.Get", _data) do
+    character_skills(state)
+  end
+
+  def handle_gmcp(state, "Target.Set", %{"name" => name}) do
+    Game.Command.Target.run({:set, name}, state)
+  end
+
+  def handle_gmcp(state, "Target.Clear", _data) do
+    Game.Command.Target.run({:clear}, state)
   end
 
   def handle_gmcp(state, _module, _data), do: state
@@ -210,6 +223,35 @@ defmodule Game.Session.GMCP do
   end
 
   @doc """
+  Send the player's configured action bar
+  """
+  @spec config_actions(State.t()) :: :ok
+  def config_actions(state) do
+    actions =
+      state.user.save.actions
+      |> Enum.map(&Map.delete(&1, :__struct__))
+      |> Enum.map(&config_action_transform/1)
+
+    data = %{actions: actions}
+
+    state.socket |> @socket.push_gmcp("Config.Actions", Poison.encode!(data))
+  end
+
+  def config_action_transform(action = %{type: "skill"}) do
+    case Skills.skill(action.id) do
+      nil ->
+        nil
+
+      skill ->
+        action
+        |> Map.delete(:id)
+        |> Map.put(:key, skill.api_id)
+    end
+  end
+
+  def config_action_transform(action), do: action
+
+  @doc """
   Push Core.Heartbeat
   """
   @spec heartbeat(map) :: :ok
@@ -223,12 +265,36 @@ defmodule Game.Session.GMCP do
   @spec skill_state(State.t(), Skill.t(), Keyword.t()) :: :ok
   def skill_state(%{socket: socket}, skill, opts) do
     data = %{
+      key: skill.api_id,
       name: skill.name,
       command: skill.command,
       active: opts[:active]
     }
 
     socket |> @socket.push_gmcp("Character.Skill", Poison.encode!(data))
+  end
+
+  @doc """
+  Send the player's skills
+  """
+  @spec character_skills(State.t()) :: :ok
+  def character_skills(state) do
+    skills =
+      state.user.save.skill_ids
+      |> Skills.skills()
+      |> Enum.map(fn skill ->
+        %{
+          key: skill.api_id,
+          name: skill.name,
+          command: skill.command,
+          points: skill.points,
+          cooldown: skill.cooldown_time,
+        }
+      end)
+
+    data = %{skills: skills}
+
+    state.socket |> @socket.push_gmcp("Character.Skills", Poison.encode!(data))
   end
 
   @doc """

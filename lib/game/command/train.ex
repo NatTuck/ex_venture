@@ -5,6 +5,10 @@ defmodule Game.Command.Train do
 
   use Game.Command
 
+  alias Data.ActionBar
+  alias Game.Format.Skills, as: FormatSkills
+  alias Game.Player
+  alias Game.Session.GMCP
   alias Game.Skill
   alias Game.Skills
   alias Game.Utility
@@ -69,8 +73,11 @@ defmodule Game.Command.Train do
   @spec parse_train_command(String.t()) :: :ok
   def parse_train_command(string) do
     case Regex.run(~r/(?<skill>.+) from (?<shop>.+)/i, string, capture: :all) do
-      nil -> {:train, string}
-      [_string, skill_name, shop_name] -> {:train, skill_name, :from, shop_name}
+      nil ->
+        {:train, string}
+
+      [_string, skill_name, shop_name] ->
+        {:train, skill_name, :from, shop_name}
     end
   end
 
@@ -92,7 +99,7 @@ defmodule Game.Command.Train do
           |> filter_skills_by_level(save)
           |> add_skill_cost(save)
 
-        skill_table = Format.trainable_skills(trainer, skills)
+        skill_table = FormatSkills.trainable_skills(trainer, skills)
         spent_experience_points = save.experience_points - save.spent_experience_points
 
         message = gettext("You have %{xp} XP to spend.", xp: spent_experience_points)
@@ -115,7 +122,7 @@ defmodule Game.Command.Train do
     case find_trainer(room.npcs, name) do
       {:ok, trainer} ->
         skills = Skills.skills(trainer.extra.trainable_skills)
-        state.socket |> @socket.echo(Format.trainable_skills(trainer, skills))
+        state.socket |> @socket.echo(FormatSkills.trainable_skills(trainer, skills))
 
       {:error, :not_found} ->
         message = gettext("There are no trainers by that name in this room. Go find them!")
@@ -222,7 +229,7 @@ defmodule Game.Command.Train do
 
   defp train_skill(:ok, _state), do: :ok
 
-  defp train_skill(skill, state = %{user: user, save: save}) do
+  defp train_skill(skill, state = %{save: save}) do
     skill_cost = Skill.skill_train_cost(skill, save)
     message = gettext("%{name} trained successfully! %{cost} XP spent.", name: skill.name, cost: skill_cost)
     state.socket |> @socket.echo(message)
@@ -231,8 +238,11 @@ defmodule Game.Command.Train do
     spent_experience_points = save.spent_experience_points + skill_cost
 
     save = %{save | skill_ids: skill_ids, spent_experience_points: spent_experience_points}
-    user = %{user | save: save}
-    state = %{state | user: user, save: save}
+    save = ActionBar.maybe_add_action(save, %ActionBar.SkillAction{id: skill.id})
+    state = Player.update_save(state, save)
+
+    state |> GMCP.character_skills()
+    state |> GMCP.config_actions()
 
     {:update, state}
   end

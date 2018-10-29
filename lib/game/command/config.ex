@@ -6,7 +6,8 @@ defmodule Game.Command.Config do
   use Game.Command
 
   alias Data.Save.Config, as: PlayerConfig
-  alias Game.Format
+  alias Game.Format.Players, as: FormatPlayers
+  alias Game.Player
   alias Game.Session.GMCP
 
   commands(["config"], parse: false)
@@ -89,7 +90,7 @@ defmodule Game.Command.Config do
   def run(command, state)
 
   def run({:list}, state = %{save: save}) do
-    {:paginate, Format.config(save), state}
+    {:paginate, FormatPlayers.config(save), state}
   end
 
   def run({:on, config_name}, state) do
@@ -189,9 +190,7 @@ defmodule Game.Command.Config do
       save.config
       |> Map.put(config_atom, value)
 
-    save = %{save | config: config}
-    user = %{state.user | save: save}
-    state = %{state | user: user, save: save}
+    state = Player.update_save(state, %{save | config: config})
 
     case value do
       true ->

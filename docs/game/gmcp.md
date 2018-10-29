@@ -41,8 +41,37 @@ Character.Info {
 ### Character.Skill
 
 Fired when a skill's active state changes.
+
 ```
-Character.Skill {"name": "Magic Missile", "command": "magic missile", "active": true}
+Character.Skill {
+  "key": "2b557868-1b1d-4ba0-8306-e7a2ebf6f965",
+  "name": "Magic Missile",
+  "command": "magic missile",
+  "active": true
+}
+```
+
+### Character.Skills
+
+Sent on login and can be requested from the player.
+
+```
+Character.Skills {
+  "skills": [
+    {"key": "2b557868-1b1d-4ba0-8306-e7a2ebf6f965", "name": "Magic Missile", "command": "magic missile", "points": 2, "cooldown": 3000},
+    {"key": "0fdfe622-ed6b-4448-8882-35abefb5e7dc", "name": "Frosy Ray", "command": "frost ray", "points": 3, "cooldown": 5000}
+  ]
+}
+```
+
+### Character.Skills.Get
+
+*Client Message*
+
+You may request the full list of skills known at any point.
+
+```
+Character.Skills.Get {}
 ```
 
 ### Character.Vitals
@@ -65,6 +94,19 @@ Character.Vitals {
 
 ## Config
 
+### Config.Actions
+
+This will contain the full set of actions the player has configured for their action bar
+
+```
+Config.Actions {
+  "actions": [
+    {"type": "skill", "key": "2b557868-1b1d-4ba0-8306-e7a2ebf6f965"},
+    {"type": "skill", "key": "0fdfe622-ed6b-4448-8882-35abefb5e7dc"}
+  ]
+}
+```
+
 ### Config.Update
 
 This will contain the full config that the player has, anytime it is updated.
@@ -79,7 +121,9 @@ Config.Update {
 
 This follows the Mudlet External.Discord package spec.
 
-### External.Discord.Get (Client Sent)
+### External.Discord.Get
+
+*Client Message*
 
 Sent from the client when they wish to receive current discord status.
 
@@ -87,7 +131,9 @@ Sent from the client when they wish to receive current discord status.
 External.Discord.Get {}
 ```
 
-### External.Discord.Hello (Client Sent)
+### External.Discord.Hello
+
+*Client Message*
 
 Sent as a welcome from the client to see if Discord integration is available.
 
@@ -99,11 +145,13 @@ External.Discord.Hello {}
 
 ### External.Discord.Info
 
-A response to `External.Discord.Hello`. Will contain the discord server invite url if present.
+A response to `External.Discord.Hello`. Will contain the discord server invite url if present, and
+the Discord Application ID if present.
 
 ```
 External.Discord.Info {
-  inviteurl: "discord.gg"
+  inviteurl: "discord.gg",
+  applicationid: "..."
 }
 ```
 
@@ -206,8 +254,22 @@ Target.Character {"type": "player", "name": "Player", "id": 3}
 
 ### Target.Clear
 
+*Can be a Client Message*
+
+This is notifying that your target is emtpy, or if sent will clear your target.
+
 ```
 Target.Clear {}
+```
+
+### Target.Set
+
+*Client Message*
+
+Set your current target
+
+```
+Target.Set {"name": "Player"}
 ```
 
 ### Target.You

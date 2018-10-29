@@ -8,8 +8,10 @@ defmodule Game.Session.Character do
   alias Game.Character
   alias Game.Experience
   alias Game.Format
+  alias Game.Format.Effects, as: FormatEffects
   alias Game.Hint
   alias Game.Items
+  alias Game.Player
   alias Game.Quest
   alias Game.Session
   alias Game.Session.Effects
@@ -42,12 +44,12 @@ defmodule Game.Session.Character do
   Callback for after a player sent effects to another character
   """
   def effects_applied(state, effects, target) do
-    case Character.who(target) == {:player, state.user.id} do
+    case Character.who(target) == {:player, state.character.id} do
       true ->
         state
 
       false ->
-        message = Enum.join(Format.effects(effects, target), "\n")
+        message = Enum.join(FormatEffects.effects(effects, target), "\n")
         state.socket |> @socket.echo(message)
         state |> Session.Process.prompt()
         state
@@ -64,7 +66,7 @@ defmodule Game.Session.Character do
     state |> GMCP.character_leave(character)
 
     # see if who is you
-    case Character.who(who) == Character.who({:player, state.user}) do
+    case Character.who(who) == Character.who({:player, state.character}) do
       true ->
         state =
           state
@@ -88,7 +90,7 @@ defmodule Game.Session.Character do
   end
 
   def notify(state, {"currency/dropped", character, currency}) do
-    case Character.who(character) == {:player, state.user.id} do
+    case Character.who(character) == {:player, state.character.id} do
       true ->
         state
 
@@ -105,12 +107,11 @@ defmodule Game.Session.Character do
     |> @socket.echo("You received #{Format.currency(currency)} from #{Format.name(character)}.")
 
     save = %{save | currency: save.currency + currency}
-    user = %{state.user | save: save}
-    %{state | user: user, save: save}
+    Player.update_save(state, save)
   end
 
   def notify(state, {"item/dropped", character, item}) do
-    case Character.who(character) == {:player, state.user.id} do
+    case Character.who(character) == {:player, state.character.id} do
       true ->
         state
 
@@ -129,8 +130,7 @@ defmodule Game.Session.Character do
     |> @socket.echo("You received #{Format.item_name(item)} from #{Format.name(character)}.")
 
     save = %{save | items: [instance | save.items]}
-    user = %{state.user | save: save}
-    %{state | user: user, save: save}
+    Player.update_save(state, save)
   end
 
   def notify(state, {"mail/new", mail}) do
@@ -226,7 +226,7 @@ defmodule Game.Session.Character do
   def notify(state, {"room/overheard", characters, message}) do
     skip_echo? =
       Enum.any?(characters, fn character ->
-        character == {:player, state.user}
+        character == {:player, state.character}
       end)
 
     case skip_echo? do
@@ -247,7 +247,7 @@ defmodule Game.Session.Character do
 
   def notify(state, {"quest/new", quest}) do
     state.socket
-    |> @socket.echo("You received a new quest, #{Format.quest_name(quest)} (#{quest.id}).")
+    |> @socket.echo("You received a new quest, #{Format.Quests.quest_name(quest)} (#{quest.id}).")
 
     Hint.gate(state, "quests.new", id: quest.id)
 
@@ -296,7 +296,7 @@ defmodule Game.Session.Character do
     state |> GMCP.target(player)
 
     player = Character.who(player)
-    Character.being_targeted(player, {:player, state.user})
+    Character.being_targeted(player, {:player, state.character})
 
     %{state | target: player}
   end
@@ -308,7 +308,7 @@ defmodule Game.Session.Character do
   def possible_new_target(state) do
     state.is_targeting
     |> MapSet.to_list()
-    |> Enum.reject(&(&1 == {:player, state.user.id}))
+    |> Enum.reject(&(&1 == {:player, state.character.id}))
     |> List.first()
     |> character_info()
   end
@@ -335,12 +335,20 @@ defmodule Game.Session.Character do
       case Experience.apply(state, level: level, experience_points: experience_points) do
         {:ok, experience, state} ->
           state.socket |> @socket.echo("You received #{experience} experience points.")
+          state |> GMCP.vitals()
 
           state
 
         {:ok, :level_up, experience, state} ->
           state.socket |> @socket.echo("You received #{experience} experience points.")
           state.socket |> @socket.echo("You leveled up!")
+
+          # May add to the action bar
+          state = state |> Experience.notify_new_skills()
+
+          state |> GMCP.vitals()
+          state |> GMCP.character_skills()
+          state |> GMCP.config_actions()
 
           state
       end
