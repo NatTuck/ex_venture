@@ -13,13 +13,13 @@
     <link rel="alternate" type="application/rss+xml" title="<%= Config.game_name %> » Announcements" href="<%= public_announcement_url(@conn, :feed) %>">
 
     <script type="application/javascript">
-<%= if Map.has_key?(assigns, :user) do %>
-window.gameConfig = <%= raw(Poison.encode!(game_config(@user))) %>
+<%= if Map.has_key?(assigns, :current_character) do %>
+window.gameConfig = <%= raw(Poison.encode!(game_config(@current_character))) %>
 <% end %>
     </script>
   </head>
 
-  <body id="body" data-user-token="<%= @conn |> user_token() %>">
+  <body id="body" data-character-token="<%= @conn |> character_token() %>">
     <nav class="site-header navbar navbar-expand-lg navbar-dark">
       <div class="container">
         <%= link(Config.game_name(), to: public_page_path(@conn, :index), class: "navbar-brand") %>
@@ -27,52 +27,7 @@ window.gameConfig = <%= raw(Poison.encode!(game_config(@user))) %>
           <span class="navbar-toggler-icon"></span>
         </button>
 
-        <div class="collapse navbar-collapse" id="navbarsExample09">
-          <ul class="navbar-nav mr-auto">
-            <li class="nav-item <%= tab_selected(@conn, "who") %>">
-              <%= link("Who's Online", to: public_who_path(@conn, :index), class: "nav-link") %>
-            </li>
-            <li class="nav-item <%= tab_selected(@conn, "classes") %>">
-              <%= link("Classes", to: public_class_path(@conn, :index), class: "nav-link") %>
-            </li>
-            <li class="nav-item <%= tab_selected(@conn, "skills") %>">
-              <%= link("Skills", to: public_skill_path(@conn, :index), class: "nav-link") %>
-            </li>
-            <li class="nav-item <%= tab_selected(@conn, "races") %>">
-              <%= link("Races", to: public_race_path(@conn, :index), class: "nav-link") %>
-            </li>
-            <li class="nav-item <%= tab_selected(@conn, "help") %>">
-              <%= link("Help", to: public_help_path(@conn, :index), class: "nav-link") %>
-            </li>
-
-            <%= if Map.has_key?(@conn.assigns, :user) do %>
-              <li class="nav-item <%= tab_selected(@conn, "chat") %>">
-                <%= link("Chat", to: public_chat_path(@conn, :show), class: "nav-link") %>
-              </li>
-              <li class="nav-item <%= tab_selected(@conn, "account") %>">
-                <%= link(to: public_mail_path(@conn, :index), class: "nav-link") do %>
-                  Account
-                  <%= if (unread_count = Mail.unread_count(@user)) > 0 do %>
-                    <span class="badge badge-info"><%= unread_count %></span>
-                  <% end %>
-                <% end %>
-              </li>
-              <%= if @conn |> is_admin? do %>
-                <li class="nav-item>">
-                  <%= link("Admin", to: dashboard_path(@conn, :index), class: "nav-link") %>
-                </li>
-              <% end %>
-              <li class="nav-item">
-                <%= link("Sign Out", to: public_session_path(@conn, :delete), class: "nav-link", method: "delete") %>
-              </li>
-            <% end %>
-          </ul>
-          <%= if Map.has_key?(@conn.assigns, :user) do %>
-            <%= link("Play Now", to: public_play_path(@conn, :show), class: "btn btn-secondary") %>
-          <% else %>
-            <%= link("Sign in", to: public_session_path(@conn, :new), class: "btn btn-secondary") %>
-          <% end %>
-        </div>
+        <%= render("_navbar.html", assigns) %>
       </div>
     </nav>
 

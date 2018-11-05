@@ -7,22 +7,18 @@ defmodule Web.User do
 
   require Logger
 
-  alias Data.QuestProgress
   alias Data.Repo
-  alias Data.Stats
   alias Data.User
   alias Data.User.OneTimePassword
   alias ExVenture.Mailer
   alias Game.Account
   alias Game.Config
   alias Game.Emails
-  alias Game.Experience
-  alias Game.Session
   alias Game.Session.Registry, as: SessionRegistry
   alias Metrics.PlayerInstrumenter
+  alias Web.Character
   alias Web.Filter
   alias Web.Pagination
-  alias Web.Race
 
   @behaviour Filter
 
@@ -46,6 +42,7 @@ defmodule Web.User do
   def from_token(token) do
     User
     |> where([u], u.token == ^token)
+    |> preload([:characters])
     |> Repo.one()
   end
 
@@ -58,7 +55,6 @@ defmodule Web.User do
 
     User
     |> order_by([u], desc: u.updated_at)
-    |> preload([:class, :race])
     |> Filter.filter(opts[:filter], __MODULE__)
     |> Pagination.paginate(opts)
   end
@@ -99,11 +95,9 @@ defmodule Web.User do
     User
     |> where([u], u.id == ^id)
     |> preload([
-      :class,
-      :race,
       sessions: ^from(s in User.Session, order_by: [desc: s.started_at], limit: 10)
     ])
-    |> preload(quest_progress: [:quest])
+    |> preload(characters: [quest_progress: [:quest]])
     |> Repo.one()
   end
 
@@ -140,29 +134,50 @@ defmodule Web.User do
   def email_changeset(user), do: user |> User.email_changeset(%{})
 
   @doc """
+  Get a changeset for finalizing registration
+  """
+  def finalize(user), do: user |> User.finalize_changeset(%{})
+
+  @doc """
   Create a new user
   """
   @spec create(params :: map) :: {:ok, User.t()} | {:error, changeset :: map}
-  def create(params = %{"race_id" => race_id}) do
-    save = starting_save(race_id)
-    params = Map.put(params, "save", save)
+  def create(params) do
+    case Repo.transaction(fn -> _create(params) end) do
+      {:ok, result} ->
+        result
 
-    changeset = %User{} |> User.changeset(params)
-
-    case changeset |> Repo.insert() do
-      {:ok, user} ->
-        Account.maybe_email_welcome(user)
-
-        Config.claim_character_name(user.name)
-
-        {:ok, user}
-
-      {:error, changeset} ->
-        {:error, changeset}
+      {:error, result} ->
+        result
     end
   end
 
-  def create(params) do
+  def _create(params) do
+    with {:ok, user} <- create_user(params) do
+      case Character.create(user, params) do
+        {:ok, character} ->
+          Account.maybe_email_welcome(user)
+
+          Config.claim_character_name(character.name)
+
+          {:ok, user, character}
+
+        {:error, changeset} ->
+          user_changeset =
+            user
+            |> Ecto.Changeset.change()
+            |> Map.put(:action, :insert)
+            |> Map.put(:errors, changeset.errors)
+
+          Repo.rollback({:error, user_changeset})
+      end
+    else
+      {:error, changeset} ->
+        Repo.rollback({:error, changeset})
+    end
+  end
+
+  defp create_user(params) do
     %User{}
     |> User.changeset(params)
     |> Repo.insert()
@@ -195,15 +210,13 @@ defmodule Web.User do
   end
 
   @doc """
-  Get a starting save for a user
+  Finalize a user
   """
-  @spec starting_save(race_id :: integer()) :: Save.t()
-  def starting_save(race_id) do
-    race = Race.get(race_id)
-
-    Config.starting_save()
-    |> Map.put(:stats, race.starting_stats() |> Stats.default())
-    |> Account.maybe_change_starting_room()
+  @spec finalize_user(User.t(), map()) :: {:ok, User.t()} | {:error, Ecto.Changeset.t()}
+  def finalize_user(user, params) do
+    user
+    |> User.finalize_changeset(params)
+    |> Repo.update()
   end
 
   @doc """
@@ -213,51 +226,6 @@ defmodule Web.User do
   def connected_players() do
     SessionRegistry.connected_players()
     |> Enum.map(& &1.player)
-  end
-
-  @doc """
-  Teleport a user to the room
-
-  Updates the save and sends a message to their session
-  """
-  @spec teleport(user :: User.t(), room_id :: integer) :: {:ok, User.t()} | {:error, map}
-  def teleport(user, room_id) do
-    room_id = String.to_integer(room_id)
-    save = %{user.save | room_id: room_id}
-    changeset = user |> User.changeset(%{save: save})
-
-    case changeset |> Repo.update() do
-      {:ok, user} ->
-        teleport_player_in_game(user, room_id)
-
-        {:ok, user}
-
-      anything ->
-        anything
-    end
-  end
-
-  def teleport_player_in_game(user, room_id) do
-    case SessionRegistry.find_connected_player(user.id) do
-      nil ->
-        nil
-
-      %{pid: pid} ->
-        pid |> Session.teleport(room_id)
-    end
-  end
-
-  @doc """
-  Reset a player's save file, and quest progress
-  """
-  def reset(user_id) do
-    user = Repo.get(User, user_id)
-
-    QuestProgress
-    |> where([qp], qp.user_id == ^user.id)
-    |> Repo.delete_all()
-
-    Account.save(user, starting_save(user.race_id))
   end
 
   @doc """
@@ -274,33 +242,6 @@ defmodule Web.User do
         user
         |> User.password_changeset(params)
         |> Repo.update()
-    end
-  end
-
-  @doc """
-  Disconnect players
-
-  The server will shutdown shortly.
-  """
-  @spec disconnect() :: :ok
-  def disconnect() do
-    SessionRegistry.connected_players()
-    |> Enum.each(fn %{pid: pid} ->
-      Session.disconnect(pid, reason: "server shutdown", force: true)
-    end)
-
-    :ok
-  end
-
-  @spec disconnect(integer()) :: :ok
-  def disconnect(user_id) do
-    case Session.find_connected_player(user_id) do
-      nil ->
-        :ok
-
-      %{pid: pid} ->
-        Session.disconnect(pid, reason: "disconnect", force: true)
-        :ok
     end
   end
 
@@ -379,6 +320,11 @@ defmodule Web.User do
   end
 
   defp _find_and_validate(nil, _password) do
+    Comeonin.Bcrypt.dummy_checkpw()
+    {:error, :invalid}
+  end
+
+  defp _find_and_validate(%{password_hash: nil}, _password) do
     Comeonin.Bcrypt.dummy_checkpw()
     {:error, :invalid}
   end
@@ -469,21 +415,84 @@ defmodule Web.User do
     |> Repo.update()
   end
 
-  def activate_cheat(user, params) do
-    case Map.get(params, "name") do
-      "experience" ->
-        experience_points = String.to_integer(Map.get(params, "value"))
-        save = Experience.add_experience(user.save, experience_points)
-        save = Experience.maybe_level_up(user.save, save)
-        Account.save(user, save)
-    end
-  end
-
   @doc """
   Authorize a connection
   """
-  @spec authorize_connection(User.t(), String.t()) :: :ok
-  def authorize_connection(user, id) do
-    SessionRegistry.authorize_connection(user, id)
+  @spec authorize_connection(Data.Character.t(), String.t()) :: :ok
+  def authorize_connection(character, id) do
+    SessionRegistry.authorize_connection(character, id)
+  end
+
+  @doc """
+  True if the user needs to be finalized and finish registration
+  """
+  def finalize_registration?(user) do
+    is_nil(user.name)
+  end
+
+  @doc """
+  Find or create a user who signed in from Grapevine
+  """
+  def from_grapevine(auth) do
+    params = %{
+      provider: to_string(auth.provider),
+      provider_uid: auth.uid,
+      name: auth.info.name,
+      email: auth.info.email,
+    }
+
+    auth
+    |> maybe_find_user()
+    |> maybe_fully_register(params)
+    |> maybe_partially_register(params)
+  end
+
+  defp maybe_find_user(auth) do
+    provider = to_string(auth.provider)
+
+    case Repo.get_by(User, provider: provider, provider_uid: auth.uid) do
+      nil ->
+        {:error, :not_found}
+
+      user ->
+        case is_nil(user.name) do
+          true ->
+            {:ok, :finalize_registration, user}
+
+          false ->
+            {:ok, user}
+        end
+    end
+  end
+
+  defp maybe_fully_register({:ok, user}, _params), do: {:ok, user}
+
+  defp maybe_fully_register({:ok, :finalize_registration, user}, _params), do: {:ok, :finalize_registration, user}
+
+  defp maybe_fully_register({:error, :not_found}, params) do
+    %User{}
+    |> User.grapevine_changeset(params)
+    |> Repo.insert()
+  end
+
+  defp maybe_partially_register({:ok, user}, _params), do: {:ok, user}
+
+  defp maybe_partially_register({:ok, :finalize_registration, user}, _params), do: {:ok, :finalize_registration, user}
+
+  defp maybe_partially_register({:error, _changeset}, params) do
+    params =
+      params
+      |> Map.delete(:email)
+      |> Map.delete(:name)
+
+    changeset = %User{} |> User.grapevine_changeset(params)
+
+    case Repo.insert(changeset) do
+      {:ok, user} ->
+        {:ok, :finalize_registration, user}
+
+      {:error, changeset} ->
+        {:error, changeset}
+    end
   end
 end
